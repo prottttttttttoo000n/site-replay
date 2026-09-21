@@ -24,7 +24,6 @@ export class SessionHub extends DurableObject<Env> {
     if (this.initialized) return;
     this.initialized = true;
 
-    // Create tables
     await this.ctx.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
@@ -52,7 +51,6 @@ export class SessionHub extends DurableObject<Env> {
       CREATE INDEX IF NOT EXISTS idx_sessions_site ON sessions(site_id, started_at);
     `);
 
-    // Load active sessions into memory
     const results = this.ctx.storage.sql.exec(
       "SELECT id, site_id, started_at, event_count, page_url, user_agent FROM sessions WHERE ended_at IS NULL"
     );
@@ -74,27 +72,10 @@ export class SessionHub extends DurableObject<Env> {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // WebSocket: recorder ingestion
-    if (path === "/ws/record") {
-      return this.handleRecordWS(request);
-    }
-
-    // WebSocket: dashboard live view
-    if (path === "/ws/watch") {
-      return this.handleWatchWS(request);
-    }
-
-    // HTTP: batch event ingestion
-    if (path === "/ingest" && request.method === "POST") {
-      return this.handleBatchIngest(request);
-    }
-
-    // HTTP: list sessions
-    if (path === "/sessions") {
-      return this.handleListSessions(url);
-    }
-
-    // HTTP: get single session with events
+    if (path === "/ws/record") return this.handleRecordWS(request);
+    if (path === "/ws/watch") return this.handleWatchWS(request);
+    if (path === "/ingest" && request.method === "POST") return this.handleBatchIngest(request);
+    if (path === "/sessions") return this.handleListSessions(url);
     if (path.startsWith("/session/")) {
       const sessionId = path.split("/")[2];
       return this.handleGetSession(sessionId);
@@ -103,21 +84,15 @@ export class SessionHub extends DurableObject<Env> {
     return new Response("Not Found", { status: 404 });
   }
 
-  // ─── WebSocket: Recorder ───
   private handleRecordWS(request: Request): Response {
     const url = new URL(request.url);
     const sessionId = url.searchParams.get("sid");
-
-    if (!sessionId) {
-      return new Response("Missing sid parameter", { status: 400 });
-    }
+    if (!sessionId) return new Response("Missing sid parameter", { status: 400 });
 
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
-
     this.ctx.acceptWebSocket(server, `recorder:${sessionId}`);
 
-    // Create session record
     const session: SessionState = {
       id: sessionId,
       siteId: "default",
@@ -130,36 +105,27 @@ export class SessionHub extends DurableObject<Env> {
 
     this.ctx.storage.sql.exec(
       "INSERT OR IGNORE INTO sessions (id, site_id, started_at) VALUES (?, ?, ?)",
-      [sessionId, session.siteId, session.startedAt]
+      sessionId, session.siteId, session.startedAt
     );
 
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  // ─── WebSocket: Dashboard Viewer ───
   private handleWatchWS(request: Request): Response {
     const url = new URL(request.url);
     const sessionId = url.searchParams.get("sid");
-
-    if (!sessionId) {
-      return new Response("Missing sid parameter", { status: 400 });
-    }
+    if (!sessionId) return new Response("Missing sid parameter", { status: 400 });
 
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
-
     this.ctx.acceptWebSocket(server, `viewer:${sessionId}`);
 
-    // Add to viewers
-    if (!this.viewers.has(sessionId)) {
-      this.viewers.set(sessionId, []);
-    }
+    if (!this.viewers.has(sessionId)) this.viewers.set(sessionId, []);
     this.viewers.get(sessionId)!.push(server);
 
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  // ─── WebSocket Messages ───
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
     const tags = (ws as any).attachedTags as string[] | undefined;
     const tag = tags?.[0] || "";
@@ -193,54 +159,42 @@ export class SessionHub extends DurableObject<Env> {
     if (tag.startsWith("viewer:")) {
       const sessionId = tag.split(":")[1];
       const viewers = this.viewers.get(sessionId) || [];
-      this.viewers.set(
-        sessionId,
-        viewers.filter((v) => v !== ws)
-      );
+      this.viewers.set(sessionId, viewers.filter((v) => v !== ws));
     }
   }
 
-  // ─── Event Processing ───
   private async processEvents(sessionId: string, events: ReplayEvent[]) {
     const session = this.sessions.get(sessionId);
     if (!session) return;
 
-    // Store events in SQLite
     for (const event of events) {
-      await this.ctx.storage.sql.exec(
+      this.ctx.storage.sql.exec(
         "INSERT INTO events (session_id, type, timestamp, data) VALUES (?, ?, ?, ?)",
-        [sessionId, event.type, event.timestamp, JSON.stringify(event)]
+        sessionId, event.type, event.timestamp, JSON.stringify(event)
       );
     }
 
-    // Update session metadata
     session.eventCount += events.length;
 
-    // Extract page info from navigation events
     const navEvent = events.find((e) => e.type === "navigation");
     if (navEvent) {
       session.pageUrl = navEvent.url || "";
       session.userAgent = navEvent.userAgent || "";
-
-      // Update siteId if provided
-      const url = new URL(navEvent.url || "https://unknown");
-      session.siteId = url.hostname;
+      try {
+        const u = new URL(navEvent.url || "https://unknown");
+        session.siteId = u.hostname;
+      } catch { /* keep existing */ }
     }
 
-    await this.ctx.storage.sql.exec(
-      "UPDATE sessions SET event_count = ?, page_url = ?, user_agent = ? WHERE id = ?",
-      [session.eventCount, session.pageUrl, session.userAgent, sessionId]
+    this.ctx.storage.sql.exec(
+      "UPDATE sessions SET event_count = ?, page_url = ?, user_agent = ?, site_id = ? WHERE id = ?",
+      session.eventCount, session.pageUrl, session.userAgent, session.siteId, sessionId
     );
 
-    // Broadcast to live viewers
     const viewers = this.viewers.get(sessionId) || [];
     const msg = JSON.stringify(events);
     for (const viewer of viewers) {
-      try {
-        viewer.send(msg);
-      } catch {
-        // Viewer disconnected
-      }
+      try { viewer.send(msg); } catch { /* disconnected */ }
     }
   }
 
@@ -251,14 +205,13 @@ export class SessionHub extends DurableObject<Env> {
     const endedAt = new Date().toISOString();
     const duration = new Date(endedAt).getTime() - new Date(session.startedAt).getTime();
 
-    await this.ctx.storage.sql.exec(
+    this.ctx.storage.sql.exec(
       "UPDATE sessions SET ended_at = ?, duration = ? WHERE id = ?",
-      [endedAt, duration, sessionId]
+      endedAt, duration, sessionId
     );
 
     session.endedAt = endedAt;
 
-    // Archive to R2 if session has meaningful data
     if (session.eventCount > 10) {
       await this.archiveSession(sessionId);
     }
@@ -269,10 +222,9 @@ export class SessionHub extends DurableObject<Env> {
       const session = this.sessions.get(sessionId);
       if (!session) return;
 
-      // Fetch all events
       const results = this.ctx.storage.sql.exec(
         "SELECT type, timestamp, data FROM events WHERE session_id = ? ORDER BY timestamp",
-        [sessionId]
+        sessionId
       );
 
       const events: any[] = [];
@@ -284,25 +236,34 @@ export class SessionHub extends DurableObject<Env> {
         });
       }
 
-      const key = `${session.siteId}/${sessionId}.json`;
-
       if (this.env.SESSION_ARCHIVE) {
-        await this.env.SESSION_ARCHIVE.put(
-          key,
-          JSON.stringify({
-            meta: session,
-            events,
-          })
-        );
+        const key = `${session.siteId}/${sessionId}.json`;
+        await this.env.SESSION_ARCHIVE.put(key, JSON.stringify({ meta: session, events }));
       }
     } catch (e) {
       console.error("Archive error:", e);
     }
   }
 
-  // ─── HTTP Handlers ───
   private async handleBatchIngest(request: Request): Promise<Response> {
     const { sessionId, events } = await request.json();
+
+    if (!this.sessions.has(sessionId)) {
+      const session: SessionState = {
+        id: sessionId,
+        siteId: "default",
+        startedAt: new Date().toISOString(),
+        eventCount: 0,
+        pageUrl: "",
+        userAgent: "",
+      };
+      this.sessions.set(sessionId, session);
+      this.ctx.storage.sql.exec(
+        "INSERT OR IGNORE INTO sessions (id, site_id, started_at) VALUES (?, ?, ?)",
+        sessionId, session.siteId, session.startedAt
+      );
+    }
+
     await this.processEvents(sessionId, events);
     return new Response(JSON.stringify({ ok: true, received: events.length }));
   }
@@ -312,37 +273,32 @@ export class SessionHub extends DurableObject<Env> {
     const limit = parseInt(url.searchParams.get("limit") || "50");
     const offset = parseInt(url.searchParams.get("offset") || "0");
 
-    const results = this.ctx.storage.sql.exec(
+    const cursor = this.ctx.storage.sql.exec(
       "SELECT * FROM sessions WHERE site_id = ? ORDER BY started_at DESC LIMIT ? OFFSET ?",
-      [siteId, limit, offset]
+      siteId, limit, offset
     );
 
     const sessions: any[] = [];
-    for (const row of results) {
+    for (const row of cursor) {
       sessions.push(row);
     }
 
-    // Count live sessions
     const live = Array.from(this.sessions.values()).filter(
       (s) => !s.endedAt && s.siteId === siteId
     ).length;
 
     return new Response(
-      JSON.stringify({
-        sessions,
-        total: sessions.length,
-        live,
-      })
+      JSON.stringify({ sessions, total: sessions.length, live }),
+      { headers: { "Content-Type": "application/json" } }
     );
   }
 
   private async handleGetSession(sessionId: string): Promise<Response> {
     const session = this.sessions.get(sessionId);
 
-    // Fetch events from SQLite
     const results = this.ctx.storage.sql.exec(
       "SELECT type, timestamp, data FROM events WHERE session_id = ? ORDER BY timestamp",
-      [sessionId]
+      sessionId
     );
 
     const events: any[] = [];
@@ -355,10 +311,8 @@ export class SessionHub extends DurableObject<Env> {
     }
 
     return new Response(
-      JSON.stringify({
-        meta: session,
-        events,
-      })
+      JSON.stringify({ meta: session, events }),
+      { headers: { "Content-Type": "application/json" } }
     );
   }
 }
