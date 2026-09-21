@@ -286,13 +286,15 @@ export class SessionHub extends DurableObject<Env> {
 
       const key = `${session.siteId}/${sessionId}.json`;
 
-      await this.env.SESSION_ARCHIVE.put(
-        key,
-        JSON.stringify({
-          meta: session,
-          events,
-        })
-      );
+      if (this.env.SESSION_ARCHIVE) {
+        await this.env.SESSION_ARCHIVE.put(
+          key,
+          JSON.stringify({
+            meta: session,
+            events,
+          })
+        );
+      }
     } catch (e) {
       console.error("Archive error:", e);
     }

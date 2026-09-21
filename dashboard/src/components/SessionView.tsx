@@ -108,7 +108,7 @@ export function SessionView() {
     // Connect to live stream if session is still active
     if (!data.meta.ended_at) {
       setIsLive(true);
-      wsRef.current = watchSession(id as string, (newEvents) => {
+      wsRef.current = watchSession(id as string, (newEvents: ReplayEvent[]) => {
         // Append new events and extend player
         data.events.push(...newEvents);
       });
