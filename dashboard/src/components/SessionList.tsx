@@ -47,7 +47,7 @@ export function SessionList() {
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [live, setLive] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [siteId, setSiteId] = useState("localhost");
+  const [siteId, setSiteId] = useState("");
 
   const load = async () => {
     setLoading(true);

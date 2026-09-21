@@ -273,10 +273,18 @@ export class SessionHub extends DurableObject<Env> {
     const limit = parseInt(url.searchParams.get("limit") || "50");
     const offset = parseInt(url.searchParams.get("offset") || "0");
 
-    const cursor = this.ctx.storage.sql.exec(
-      "SELECT * FROM sessions WHERE site_id = ? ORDER BY started_at DESC LIMIT ? OFFSET ?",
-      siteId, limit, offset
-    );
+    let cursor;
+    if (siteId) {
+      cursor = this.ctx.storage.sql.exec(
+        "SELECT * FROM sessions WHERE site_id = ? ORDER BY started_at DESC LIMIT ? OFFSET ?",
+        siteId, limit, offset
+      );
+    } else {
+      cursor = this.ctx.storage.sql.exec(
+        "SELECT * FROM sessions ORDER BY started_at DESC LIMIT ? OFFSET ?",
+        limit, offset
+      );
+    }
 
     const sessions: any[] = [];
     for (const row of cursor) {
@@ -284,7 +292,7 @@ export class SessionHub extends DurableObject<Env> {
     }
 
     const live = Array.from(this.sessions.values()).filter(
-      (s) => !s.endedAt && s.siteId === siteId
+      (s) => !s.endedAt && (!siteId || s.siteId === siteId)
     ).length;
 
     return new Response(
