@@ -1,0 +1,13 @@
+{
+  "name": "site-replay",
+  "private": true,
+  "workspaces": ["worker", "recorder", "dashboard"],
+  "scripts": {
+    "dev": "npm run dev --workspace=worker",
+    "build:recorder": "npm run build --workspace=recorder",
+    "build:dashboard": "npm run build --workspace=dashboard",
+    "build": "npm run build:recorder && npm run build:dashboard",
+    "test": "vitest run",
+    "deploy": "npm run deploy --workspace=worker && npm run deploy --workspace=dashboard"
+  }
+}

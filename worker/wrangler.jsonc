@@ -1,0 +1,22 @@
+{
+  "name": "site-replay",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-12-01",
+  "routes": [
+    { "pattern": "replay.yourdomain.com/*", "zone_name": "yourdomain.com" }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "SESSION_HUB", "class_name": "SessionHub" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_classes": ["SessionHub"] }
+  ],
+  "r2_buckets": [
+    { "binding": "SESSION_ARCHIVE", "bucket_name": "session-archive" }
+  ],
+  "vars": {
+    "ENVIRONMENT": "production"
+  }
+}
