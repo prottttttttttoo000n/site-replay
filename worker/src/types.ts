@@ -35,5 +35,6 @@ export interface SessionMeta {
 export interface Env {
   SESSION_HUB: DurableObjectNamespace;
   SESSION_ARCHIVE?: R2Bucket;
+  ASSETS: Fetcher;
   ENVIRONMENT: string;
 }

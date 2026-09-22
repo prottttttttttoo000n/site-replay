@@ -20,9 +20,13 @@
   var lastMouseMove = 0;
   var lastScroll = 0;
   var rageClicks = {};
-  var host = "";
 
   // ─── Helpers ───
+  // NOTE: document.currentScript is only valid while this script is synchronously
+  // executing. Capture the host ONCE here; re-deriving it during reconnects would
+  // fall back to location.host and send events to the wrong server.
+  var host = getHost();
+
   function getHost() {
     var script = document.currentScript;
     if (script) {
@@ -150,8 +154,8 @@
       ws.send(JSON.stringify(events));
       retryCount = 0;
     } else {
-      // POST fallback
-      fetch("/api/ingest", {
+      // POST fallback (absolute URL — the page may be hosted on a different origin)
+      fetch("https://" + host + "/api/ingest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId: SESSION_ID, events: events }),
@@ -174,7 +178,6 @@
 
   // ─── WebSocket ───
   function connect() {
-    host = getHost();
     ws = new WebSocket("wss://" + host + "/ws/record?sid=" + SESSION_ID);
 
     ws.onopen = function () {

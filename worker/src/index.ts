@@ -4,7 +4,7 @@ import { ingestRoute } from "./routes/ingest";
 import { sessionsRoute } from "./routes/sessions";
 import { healthRoute } from "./routes/health";
 import { SessionHub } from "./do/SessionHub";
-import { RJS_CONTENT } from "./generated/r";
+
 import type { Env } from "./types";
 
 export { SessionHub };
@@ -19,15 +19,6 @@ app.use(
     credentials: true,
   })
 );
-
-// Serve recorder script
-app.get("/r.js", (c) => {
-  return c.text(RJS_CONTENT, 200, {
-    "Content-Type": "application/javascript",
-    "Cache-Control": "public, max-age=3600",
-    "Access-Control-Allow-Origin": "*",
-  });
-});
 
 // API routes
 app.route("/api/health", healthRoute);
@@ -54,5 +45,25 @@ app.get("/ws/watch", async (c) => {
 });
 
 export default {
-  fetch: app.fetch,
+  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    // With run_worker_first: true, every request reaches the worker first.
+    // Serve static assets (r.js) from the ASSETS binding; everything else
+    // goes through the Hono app.
+    const url = new URL(request.url);
+
+    // Only attempt asset routing for plain GET requests without API/WS paths.
+    const isAssetPath =
+      request.method === "GET" &&
+      !url.pathname.startsWith("/api/") &&
+      !url.pathname.startsWith("/ws/");
+
+    if (isAssetPath) {
+      const asset = await env.ASSETS.fetch(request.clone());
+      if (asset.status !== 404) {
+        return asset;
+      }
+    }
+
+    return app.fetch(request, env, ctx);
+  },
 };
