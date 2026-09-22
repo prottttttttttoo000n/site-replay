@@ -148,6 +148,52 @@
     capture("resize", { width: window.innerWidth, height: window.innerHeight });
   });
 
+  // ─── DOM Snapshot ───
+  function captureSnapshot() {
+    try {
+      var clone = document.documentElement.cloneNode(true);
+      var scripts = clone.querySelectorAll("script");
+      for (var i = 0; i < scripts.length; i++) {
+        scripts[i].parentNode.removeChild(scripts[i]);
+      }
+
+      var head = clone.querySelector("head");
+      if (!head) {
+        head = document.createElement("head");
+        clone.insertBefore(head, clone.firstChild);
+      }
+
+      // Resolve relative CSS/images to the original URL when replayed in an iframe.
+      var base = document.createElement("base");
+      base.href = location.href;
+      head.insertBefore(base, head.firstChild);
+
+      // Bridge: reports scroll sizes to the parent, applies scroll commands during replay.
+      var bridge = document.createElement("script");
+      bridge.textContent =
+        "(function(){function h(){try{parent.postMessage({__sr:1,h:document.documentElement.scrollHeight,w:document.documentElement.scrollWidth},'*')}catch(e){}}h();window.addEventListener('load',h);setInterval(h,500);window.addEventListener('message',function(m){var d=m.data;if(d&&d.__srScroll){window.scrollTo(d.x,d.y)}})})();";
+      head.appendChild(bridge);
+
+      var html = "<!DOCTYPE html>" + clone.outerHTML;
+      capture("snapshot", {
+        html: html,
+        url: location.href,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+      });
+    } catch (e) {
+      // Snapshot is best-effort; never break recording on a serialization error.
+    }
+  }
+
+  function maybeCaptureSnapshot() {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", captureSnapshot, { once: true });
+    } else {
+      captureSnapshot();
+    }
+  }
+
   // ─── Transport ───
   function send(events) {
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -208,6 +254,7 @@
 
   // ─── Init ───
   if (!window.__SITE_REPLAY_OPT_OUT) {
+    maybeCaptureSnapshot();
     connect();
     setInterval(flush, FLUSH_INTERVAL);
     window.addEventListener("beforeunload", flush);

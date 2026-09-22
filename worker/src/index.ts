@@ -11,11 +11,18 @@ export { SessionHub };
 
 const app = new Hono<{ Bindings: Env }>();
 
-// CORS for dashboard
+// CORS for dashboard (apex domain + any pages.dev deployment alias)
 app.use(
   "/api/*",
   cors({
-    origin: ["http://localhost:5173", "http://127.0.0.1:5173", "https://site-replay.pages.dev", "https://master.site-replay.pages.dev"],
+    origin: (origin) => {
+      if (!origin) return origin;
+      const u = new URL(origin);
+      if (u.hostname === "site-replay.pages.dev") return origin;
+      if (u.hostname.endsWith(".site-replay.pages.dev")) return origin;
+      if (u.hostname === "localhost" || u.hostname === "127.0.0.1") return origin;
+      return null;
+    },
     credentials: true,
   })
 );

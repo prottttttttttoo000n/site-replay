@@ -1,5 +1,5 @@
 export interface ReplayEvent {
-  type: "mousemove" | "click" | "scroll" | "input" | "navigation" | "resize" | "rageClick";
+  type: "mousemove" | "click" | "scroll" | "input" | "navigation" | "resize" | "rageClick" | "snapshot";
   timestamp: number;
   x?: number;
   y?: number;
@@ -15,6 +15,7 @@ export interface ReplayEvent {
   viewportWidth?: number;
   viewportHeight?: number;
   userAgent?: string;
+  html?: string;
 }
 
 export interface SessionMeta {

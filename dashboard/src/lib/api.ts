@@ -15,7 +15,9 @@ export async function fetchSession(sessionId: string): Promise<SessionResponse> 
 }
 
 export function watchSession(sessionId: string, onEvents: (events: ReplayEvent[]) => void): WebSocket {
-  const ws = new WebSocket(`wss://${location.host}/ws/watch?sid=${sessionId}`);
+  // WS must go to the worker host (dashboard is on pages.dev, which serves no WS).
+  const apiHost = API_BASE.replace(/^https?:\/\//, "");
+  const ws = new WebSocket(`wss://${apiHost}/ws/watch?sid=${sessionId}`);
   ws.onmessage = (e) => onEvents(JSON.parse(e.data));
   return ws;
 }

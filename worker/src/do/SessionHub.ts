@@ -317,7 +317,14 @@ export class SessionHub extends DurableObject<Env> {
   }
 
   private async handleGetSession(sessionId: string): Promise<Response> {
-    const session = this.sessions.get(sessionId);
+    // Pull meta from the DB row (snake_case, same shape as the sessions list)
+    // rather than the in-memory camelCase SessionState — the dashboard consumes
+    // DB-shaped meta, and in-memory state is empty for ended sessions after a DO restart.
+    let meta: any = null;
+    for (const row of this.ctx.storage.sql.exec("SELECT * FROM sessions WHERE id = ?", sessionId)) {
+      meta = row;
+      break;
+    }
 
     const results = this.ctx.storage.sql.exec(
       "SELECT type, timestamp, data FROM events WHERE session_id = ? ORDER BY timestamp",
@@ -325,16 +332,22 @@ export class SessionHub extends DurableObject<Env> {
     );
 
     const events: any[] = [];
+    let snapshot: { html: string; url: string; viewportWidth: number; viewportHeight: number } | null = null;
     for (const row of results) {
-      events.push({
+      const event = {
         type: row.type,
         timestamp: row.timestamp,
         ...JSON.parse(row.data as string),
-      });
+      };
+      if (event.type === "snapshot" && !snapshot) {
+        snapshot = event;
+      } else if (event.type !== "snapshot") {
+        events.push(event);
+      }
     }
 
     return new Response(
-      JSON.stringify({ meta: session, events }),
+      JSON.stringify({ meta, events, snapshot }),
       { headers: { "Content-Type": "application/json" } }
     );
   }
